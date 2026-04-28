@@ -10,8 +10,17 @@ class BlockKind(str, Enum):
     TEXT = "text"
     HEADING = "heading"
     IMAGE = "image"
-    TABLE = "table"  # heuristically detected
+    TABLE = "table"   # heuristically detected (column-clustered text rows)
+    FIGURE = "figure"  # heuristically detected (vector drawings: charts/diagrams/flowcharts)
     OTHER = "other"
+
+    @property
+    def is_atomic(self) -> bool:
+        """Atomic blocks must NEVER be split across pages unless they exceed
+        a full page on their own. Tables, images and figures (vector
+        diagrams/charts/flowcharts) are atomic.
+        """
+        return self in (BlockKind.IMAGE, BlockKind.TABLE, BlockKind.FIGURE)
 
 
 @dataclass
@@ -61,6 +70,10 @@ class Block:
     @property
     def height(self) -> float: return self.bbox[3] - self.bbox[1]
 
+    @property
+    def is_atomic(self) -> bool:
+        return self.kind.is_atomic
+
 
 @dataclass
 class LayoutModel:
@@ -80,6 +93,8 @@ class LayoutModel:
 
 class BoundaryReason(str, Enum):
     BEFORE_HEADING = "before_heading"
+    BEFORE_ATOMIC = "before_atomic"      # cut just above an atomic block
+    AFTER_ATOMIC = "after_atomic"        # cut just below an atomic block
     AFTER_PARAGRAPH = "after_paragraph"
     LARGE_GAP = "large_gap"
     PAGE_TOP = "page_top"

@@ -11,6 +11,10 @@ infographic) that needs to become printable on Letter paper.
 ## Features
 
 - Semantic-aware cuts: before headings, after paragraphs, inside large gaps.
+- **Atomic block protection**: tables, images, and detected figures (vector
+  diagrams / charts / flowcharts) are never split across pages **unless** the
+  block itself is taller than a single output page — in which case slicing is
+  unavoidable and falls back to the safe geometric path.
 - Geometric fallback that still avoids cutting through detected text lines.
 - Preserves vector text and images (`PyMuPDF.show_pdf_page` with clipping).
 - Adds natural whitespace at the bottom of underfilled pages — never stretches content.
@@ -67,25 +71,57 @@ cfg = SplitConfig(
 ## How it works
 
 1. **Extract** — PyMuPDF parses the (single) source page into text blocks, lines, spans
-   (with font size & flags), and image blocks.
+   (with font size & flags), and image blocks. Vector drawings from
+   `page.get_drawings()` are clustered into atomic `FIGURE` blocks (see below).
 2. **Detect** — Heuristics promote large/bold short lines preceded by extra whitespace
-   to *headings*. A simple multi-column heuristic flags *table-like* blocks.
+   to *headings*. A simple multi-column heuristic flags *table-like* blocks. Tables,
+   images, and figures are flagged as **atomic**.
 3. **Candidates** — Generate cut Y-coordinates: page top/bottom, just-before-heading,
-   middle of large vertical gaps, end-of-paragraph.
+   just-before/just-after each atomic block, middle of large vertical gaps,
+   end-of-paragraph. Any candidate that would land *inside* an atomic block is dropped.
 4. **Plan** — Compute `scale = content_width / source_width`, slice capacity in source
-   points = `content_height / scale`. Walk top-to-bottom; for each output page pick the
-   candidate inside `[cur, cur + capacity]` that minimizes:
+   points = `content_height / scale`. Walk top-to-bottom; for each output page:
 
-       cost = semantic_weight * semantic_penalty
-            + underfill_weight * underfill² (+ tiny-page penalty)
-            + cut_through_weight * (1 if it slices a block else 0)
+   - **Atomic-block protection (hard constraint).** If an atomic block of height
+     ≤ capacity straddles the current target window, the planner clips the
+     window's upper bound to that block's top, forcing the block onto the next
+     page in one piece. Atomic blocks taller than capacity are unavoidable and
+     fall through to the geometric path.
+   - Among remaining candidates inside `[cur, target_max]`, pick the one minimizing:
 
-   If no candidate fits (e.g. one block is taller than a page), fall back to a safe
-   geometric cut placed in the largest gap between text lines within the window.
+         cost = semantic_weight * semantic_penalty
+              + underfill_weight * underfill² (+ tiny-page penalty)
+              + cut_through_weight * (1 if it slices a non-atomic block else 0)
+
+   - If no candidate fits (e.g. one block is taller than a page), fall back to a
+     safe geometric cut placed in the largest gap between text lines within the
+     window.
 5. **Render** — For each slice, create a Letter page and use
    `page.show_pdf_page(target_rect, src_doc, 0, clip=src_rect)` to place the clipped
    region. Vector text/images survive intact; underfill becomes natural whitespace at
    the bottom.
+
+### Atomic-block detection
+
+A block is **atomic** (never split unless taller than a page) when its kind is:
+
+- `IMAGE` — raster image blocks reported directly by PyMuPDF.
+- `TABLE` — a sequence of text lines with multiple x-clustered span groups
+  (multi-column rows).
+- `FIGURE` — a cluster of vector drawings (paths, rectangles, curves) detected
+  via `page.get_drawings()`. Tiny strokes (rules / underlines / separators) are
+  filtered out, then nearby drawings are merged. Clusters that overlap heavily
+  with running text are rejected (they're decorations, not figures).
+
+Figure detection can be tuned via `SplitConfig`:
+
+```python
+SplitConfig(
+    detect_figures=True,           # disable to skip vector-drawing detection
+    figure_min_height_pt=24.0,     # ignore drawing clusters shorter than this
+    figure_cluster_gap_ratio=1.5,  # merge drawings within 1.5x median line height
+)
+```
 
 ## Debug artifacts
 
@@ -102,6 +138,8 @@ When `--debug` is set, the tool writes to `--debug-dir` (or `<output>.debug/`):
 |---|---|
 | Page rotation set | Normalized to 0° before extraction. |
 | Multi-page input | First page only; warning logged. |
+| Atomic block (table / image / figure) fits on a page | Always placed in one piece; planner clips the slice early if needed. |
+| Atomic block taller than a page | Sliced via the safe geometric path (unavoidable). |
 | Section taller than one page | Geometric fallback inside largest line gap. |
 | Scanned PDF (no text layer) | Falls back to geometric cuts based on detected images/whitespace; results approximate. |
 | Empty top/bottom margins | Trimmed if > 0.5 in of clear empty band. |
@@ -136,7 +174,9 @@ The tests build synthetic tall PDFs with `reportlab` and verify:
 - planner coverage and capacity invariants,
 - end-to-end Letter-sized output,
 - text preservation,
-- debug artifact emission.
+- debug artifact emission,
+- **atomic-block protection** (figures fitting on a page are never sliced;
+  figures taller than a page are sliced as a last resort).
 
 ## Project layout
 

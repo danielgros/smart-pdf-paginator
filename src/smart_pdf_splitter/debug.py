@@ -23,6 +23,7 @@ _BLOCK_COLORS = {
     BlockKind.HEADING: (0.85, 0.20, 0.20),
     BlockKind.IMAGE: (0.20, 0.65, 0.30),
     BlockKind.TABLE: (0.70, 0.45, 0.10),
+    BlockKind.FIGURE: (0.55, 0.10, 0.75),
     BlockKind.OTHER: (0.40, 0.40, 0.40),
 }
 

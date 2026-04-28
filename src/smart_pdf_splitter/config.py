@@ -68,6 +68,16 @@ class SplitConfig:
     # A vertical gap is "large" if it exceeds this multiple of median line height.
     large_gap_ratio: float = 1.8
 
+    # Atomic-block protection (figures/diagrams/charts/flowcharts/tables/images).
+    # Detect vector-drawing clusters as FIGURE blocks (best-effort, conservative).
+    detect_figures: bool = True
+    # Vector-drawing clusters smaller than this many points tall are ignored
+    # (avoid mistaking horizontal rules / dividers / underlines as figures).
+    figure_min_height_pt: float = 24.0
+    # Two drawings are merged into the same figure when their vertical gap is
+    # at most this multiple of the median line height.
+    figure_cluster_gap_ratio: float = 1.5
+
     # Render DPI for debug images.
     debug_dpi: int = 110
 

@@ -7,6 +7,7 @@ from .boundary_detection import find_safe_geometric_cut
 from .config import SplitConfig, Strategy
 from .logging_config import get_logger
 from .models import (
+    BlockKind,
     BoundaryCandidate,
     BoundaryReason,
     LayoutModel,
@@ -19,6 +20,15 @@ log = get_logger(__name__)
 
 def _block_intervals(layout: LayoutModel) -> List[Tuple[float, float]]:
     return [(b.y0, b.y1) for b in layout.blocks]
+
+
+def _atomic_intervals(layout: LayoutModel) -> List[Tuple[float, float]]:
+    """Bounding intervals of atomic blocks (image/table/figure).
+
+    Atomic blocks must never be split across output pages unless they are
+    taller than a single output page.
+    """
+    return [(b.y0, b.y1) for b in layout.blocks if b.is_atomic]
 
 
 def _cuts_through_block(y: float, intervals: List[Tuple[float, float]]) -> bool:
@@ -72,6 +82,7 @@ def plan_splits(
     )
 
     intervals = _block_intervals(layout)
+    atomic = _atomic_intervals(layout)
     y_start, y_end = 0.0, layout.page_height
     # If huge empty top/bottom margins exist, trim them — but keep something so the first
     # output page doesn't start mid-content visually. We trim only if there is a clear
@@ -101,6 +112,40 @@ def plan_splits(
             raise RuntimeError("Planner safety limit hit; aborting (likely a bug).")
 
         target_max = cur + capacity
+
+        # ---- Atomic-block protection -------------------------------------
+        # If an atomic block (image/table/figure) of height <= capacity
+        # straddles the current target window, force the cut to land at the
+        # block's top so the block moves entirely onto the next page.
+        # Atomic blocks taller than capacity are unavoidable and fall through
+        # to the safe-geometric path below.
+        clip_to: float | None = None
+        for a0, a1 in atomic:
+            if a1 - a0 > capacity:
+                continue  # too tall — must be sliced; skip protection
+            # Block lies entirely before/after this slice's window?
+            if a1 <= cur + 0.5 or a0 >= target_max - 0.5:
+                continue
+            # Block is entirely inside [cur, target_max]: contained, fine.
+            if a0 >= cur + 0.5 and a1 <= target_max + 0.5:
+                continue
+            # Block starts before cur (we're already inside it). Either we
+            # entered it intentionally (e.g. it's the only choice) or the
+            # block was protected at a previous iteration but turns out > cap;
+            # nothing to clip here.
+            if a0 < cur + 0.5:
+                continue
+            # Block straddles target_max: clip target so it goes on next page.
+            if a0 < target_max:
+                clip_to = a0 if clip_to is None else min(clip_to, a0)
+        if clip_to is not None and clip_to > cur + 1.0:
+            log.debug(
+                "Page %d: clipping target_max %.1f -> %.1f to protect atomic block",
+                len(slices) + 1, target_max, clip_to,
+            )
+            target_max = clip_to
+        # ------------------------------------------------------------------
+
         if target_max >= y_end:
             # Final page — cut at end.
             slices.append(

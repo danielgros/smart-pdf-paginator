@@ -80,6 +80,27 @@ def detect_boundaries(
         BoundaryCandidate(y=0.0, reason=BoundaryReason.PAGE_TOP, semantic_penalty=0.0)
     )
 
+    # Atomic blocks (image/table/figure): always emit BEFORE_ATOMIC at the top
+    # and AFTER_ATOMIC at the bottom — these are the only valid cuts adjacent
+    # to a diagram/chart/flowchart/table that fits on a page.
+    for block in layout.blocks:
+        if not block.is_atomic:
+            continue
+        candidates.append(
+            BoundaryCandidate(
+                y=block.y0 - 0.5,
+                reason=BoundaryReason.BEFORE_ATOMIC,
+                semantic_penalty=0.05,
+            )
+        )
+        candidates.append(
+            BoundaryCandidate(
+                y=block.y1 + 0.5,
+                reason=BoundaryReason.AFTER_ATOMIC,
+                semantic_penalty=0.05,
+            )
+        )
+
     # Between consecutive blocks: gap candidates and "before heading" candidates.
     blocks = layout.blocks
     for i in range(len(blocks) - 1):
@@ -143,6 +164,20 @@ def detect_boundaries(
             semantic_penalty=0.0,
         )
     )
+
+    # Drop any candidate that falls strictly inside an atomic block (we are
+    # never allowed to cut through diagrams/tables/figures unless they exceed
+    # one page; that's enforced by the planner separately).
+    atomic_intervals = [
+        (b.y0, b.y1) for b in layout.blocks if b.is_atomic
+    ]
+    if atomic_intervals:
+        def _inside_atomic(y: float) -> bool:
+            for a0, a1 in atomic_intervals:
+                if a0 + 0.5 < y < a1 - 0.5:
+                    return True
+            return False
+        candidates = [c for c in candidates if not _inside_atomic(c.y)]
 
     # Deduplicate close candidates (within 1pt) keeping the best (lowest penalty).
     candidates.sort(key=lambda c: (c.y, c.semantic_penalty))

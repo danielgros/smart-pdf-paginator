@@ -21,7 +21,7 @@ def split_pdf(input_path: str, output_path: str, config: SplitConfig) -> int:
     """
     log.info("Opening %s", input_path)
     with fitz.open(input_path) as src:
-        layout = extract_layout(src)
+        layout = extract_layout(src, config)
         candidates = detect_boundaries(layout, config)
         plan = plan_splits(layout, candidates, config)
         render_pdf(src, plan, config, output_path)
