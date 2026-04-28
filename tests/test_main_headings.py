@@ -113,3 +113,37 @@ def test_no_main_heading_cut_through(article_layout_and_plan):
                 f"Cut at y={sl.y0:.1f} sliced main heading "
                 f"{b.lines[0].text!r} [{b.y0:.1f},{b.y1:.1f}]"
             )
+
+
+def test_callouts_detected_and_protected(article_layout_and_plan):
+    """Filled-background callouts (code blocks, admonitions, fenced examples)
+    are extracted as atomic ``CALLOUT`` blocks and never split across pages.
+
+    The user-cited example is the ``fix-issue`` SKILL.md fenced block, which
+    in this article lives at roughly y=8058..8399.
+    """
+    layout, plan = article_layout_and_plan
+    callouts = [b for b in layout.blocks if b.kind == BlockKind.CALLOUT]
+    assert len(callouts) >= 10, (
+        f"Expected several callouts, got {len(callouts)}"
+    )
+
+    # The fix-issue callout should be present and contain the literal header.
+    fix_issue = [
+        c for c in callouts
+        if any("fix-issue" in ln.text for ln in c.lines)
+    ]
+    assert fix_issue, "fix-issue callout not detected"
+    fc = fix_issue[0]
+    assert any("$ARGUMENTS" in ln.text for ln in fc.lines), (
+        "fix-issue callout missing body text"
+    )
+
+    # No cut may land strictly inside any callout that fits on one page.
+    for sl in plan.slices[1:]:
+        for c in callouts:
+            if c.height > plan.slice_capacity:
+                continue
+            assert not (c.y0 + 0.5 < sl.y0 < c.y1 - 0.5), (
+                f"Cut at y={sl.y0:.1f} sliced callout [{c.y0:.1f},{c.y1:.1f}]"
+            )

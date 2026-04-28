@@ -85,6 +85,11 @@ def extract_layout(
     median_lh = statistics.median(line_heights) if line_heights else 12.0
     median_fs = statistics.median(font_sizes) if font_sizes else 10.0
 
+    # Detect callouts (filled-background boxes: code blocks, admonitions,
+    # tip/note panels) and merge their contained text blocks into a single
+    # atomic CALLOUT block so they're never split across pages.
+    blocks = _detect_callouts(page, blocks, page_w, page_h)
+
     # Detect vector-drawing figures (charts/diagrams/flowcharts) and merge
     # them into the block list as atomic FIGURE blocks.
     if cfg.detect_figures:
@@ -122,6 +127,148 @@ def _rect_overlap_y(a: Tuple[float, float, float, float],
     return max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
 
 
+# ---------------------------------------------------------------------------
+# Callout detection (filled-background boxes: code blocks, admonitions, tips)
+# ---------------------------------------------------------------------------
+def _detect_callouts(
+    page: "fitz.Page",
+    blocks: List[Block],
+    page_w: float,
+    page_h: float,
+) -> List[Block]:
+    """Detect filled-background "callout" rectangles and merge any text blocks
+    they contain into a single atomic ``CALLOUT`` block.
+
+    A callout is a filled rectangle that:
+
+    * has a non-near-white fill (we ignore the page background);
+    * is wide (≥ ~30% of page width) but not the full page;
+    * is at least ~24pt tall (taller than a single line of body text);
+    * actually contains text (otherwise it's a decorative bar / divider).
+
+    Overlapping/adjacent callout rects (e.g. a light fill plus a dark border
+    box) are merged into one cluster.
+    """
+    try:
+        drawings = page.get_drawings()
+    except Exception as e:  # pragma: no cover - defensive
+        log.debug("get_drawings() failed: %s", e)
+        return blocks
+    if not drawings:
+        return blocks
+
+    min_w = page_w * 0.30
+    max_w = page_w * 0.95
+    min_h = 24.0
+
+    rects: List[Tuple[float, float, float, float]] = []
+    for d in drawings:
+        f = d.get("fill")
+        r = d.get("rect")
+        if f is None or r is None:
+            continue
+        # Skip near-white (page background / column background).
+        if all(c > 0.97 for c in f[:3]):
+            continue
+        if r.width < min_w or r.width > max_w:
+            continue
+        if r.height < min_h:
+            continue
+        # Skip rects covering nearly the whole page vertically.
+        if r.height > page_h * 0.9:
+            continue
+        rects.append((r.x0, r.y0, r.x1, r.y1))
+    if not rects:
+        return blocks
+
+    # Cluster rects that overlap or touch (handles light fill + dark border
+    # pair on the same callout). Two rects are in the same cluster if their
+    # y-ranges overlap *and* their x-ranges overlap.
+    rects.sort(key=lambda r: r[1])
+    clusters: List[List[Tuple[float, float, float, float]]] = []
+    for r in rects:
+        attached = False
+        for cl in clusters:
+            cy0 = min(rr[1] for rr in cl)
+            cy1 = max(rr[3] for rr in cl)
+            cx0 = min(rr[0] for rr in cl)
+            cx1 = max(rr[2] for rr in cl)
+            if (
+                min(r[3], cy1) - max(r[1], cy0) > -2.0
+                and min(r[2], cx1) - max(r[0], cx0) > -2.0
+            ):
+                cl.append(r)
+                attached = True
+                break
+        if not attached:
+            clusters.append([r])
+
+    # Build callout bboxes and find which existing blocks they swallow.
+    callout_bboxes: List[Tuple[float, float, float, float]] = []
+    for cl in clusters:
+        x0 = min(r[0] for r in cl)
+        y0 = min(r[1] for r in cl)
+        x1 = max(r[2] for r in cl)
+        y1 = max(r[3] for r in cl)
+        callout_bboxes.append((x0, y0, x1, y1))
+
+    if not callout_bboxes:
+        return blocks
+
+    swallowed: set[int] = set()
+    callout_lines: List[List[Line]] = [[] for _ in callout_bboxes]
+    callout_extents = [list(bb) for bb in callout_bboxes]
+
+    for ci, (cx0, cy0, cx1, cy1) in enumerate(callout_bboxes):
+        for bi, blk in enumerate(blocks):
+            if blk.kind in (BlockKind.IMAGE, BlockKind.FIGURE, BlockKind.TABLE,
+                            BlockKind.CALLOUT):
+                continue
+            # Block must be (mostly) vertically inside the callout.
+            overlap = min(blk.y1, cy1) - max(blk.y0, cy0)
+            if blk.height <= 0:
+                continue
+            if overlap / blk.height < 0.6:
+                continue
+            # And horizontally inside (with a small slack).
+            if blk.bbox[0] < cx0 - 4.0 or blk.bbox[2] > cx1 + 4.0:
+                continue
+            swallowed.add(bi)
+            callout_lines[ci].extend(blk.lines)
+            ex = callout_extents[ci]
+            ex[0] = min(ex[0], blk.bbox[0])
+            ex[1] = min(ex[1], blk.y0)
+            ex[2] = max(ex[2], blk.bbox[2])
+            ex[3] = max(ex[3], blk.y1)
+
+    # Drop callouts that didn't actually contain any text.
+    new_blocks: List[Block] = []
+    n_callouts = 0
+    for ci, ext in enumerate(callout_extents):
+        if not callout_lines[ci]:
+            continue
+        new_blocks.append(
+            Block(
+                kind=BlockKind.CALLOUT,
+                bbox=(ext[0], ext[1], ext[2], ext[3]),
+                lines=callout_lines[ci],
+            )
+        )
+        n_callouts += 1
+
+    for bi, blk in enumerate(blocks):
+        if bi not in swallowed:
+            new_blocks.append(blk)
+    new_blocks.sort(key=lambda b: (b.y0, b.bbox[0]))
+
+    if n_callouts:
+        log.info(
+            "Detected %d callout block(s) (absorbed %d text block(s)).",
+            n_callouts, len(swallowed),
+        )
+    return new_blocks
+
+
 def _detect_vector_figures(
     page: "fitz.Page",
     existing_blocks: List[Block],
@@ -149,6 +296,7 @@ def _detect_vector_figures(
         return []
 
     # 1. Collect non-trivial drawing rects.
+    page_h = page.rect.height
     rects: List[Tuple[float, float, float, float]] = []
     for d in drawings:
         r = d.get("rect")
@@ -156,6 +304,11 @@ def _detect_vector_figures(
             continue
         # Drop near-zero-height/width strokes (rules, separators, underlines).
         if r.height < 3.0 or r.width < 3.0:
+            continue
+        # Drop page-background-sized rects (long vertical articles often have
+        # a full-page fill that would otherwise swallow the entire page into
+        # one giant "figure").
+        if r.height > page_h * 0.85:
             continue
         rects.append((r.x0, r.y0, r.x1, r.y1))
     if not rects:
@@ -191,11 +344,18 @@ def _detect_vector_figures(
         if len(cl) < 3:
             continue
 
-        # 4. Reject clusters that overlap heavily with text blocks.
+        # 4. Reject clusters that overlap heavily with text-bearing blocks
+        #    (running text, headings, or callouts — i.e. anything that
+        #    actually carries text on the page).
         height = y1 - y0
         text_overlap = 0.0
         for tb in existing_blocks:
-            if tb.kind not in (BlockKind.TEXT, BlockKind.HEADING):
+            if tb.kind not in (
+                BlockKind.TEXT,
+                BlockKind.HEADING,
+                BlockKind.MAIN_HEADING,
+                BlockKind.CALLOUT,
+            ):
                 continue
             text_overlap += _rect_overlap_y(bbox, tb.bbox)
         if height > 0 and text_overlap / height > 0.5:

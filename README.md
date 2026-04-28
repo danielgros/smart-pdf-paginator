@@ -11,10 +11,12 @@ infographic) that needs to become printable on Letter paper.
 The splitter follows two simple rules — everything else flows naturally up to the
 page's available height:
 
-1. **Atomic blocks are kept whole.** Images, tables, and detected vector
-   figures (charts / diagrams / flowcharts) are *never* split across output
-   pages **unless** the block itself is taller than a single output page —
-   in which case slicing is unavoidable.
+1. **Atomic blocks are kept whole.** Images, tables, detected vector
+   figures (charts / diagrams / flowcharts), and **callouts** (code blocks,
+   admonitions, tip/note boxes — anything sitting inside a filled
+   background rectangle) are *never* split across output pages **unless**
+   the block itself is taller than a single output page — in which case
+   slicing is unavoidable.
 2. **Main section headings start a new page.** A heading is "main" when its
    font size is at least `main_heading_size_ratio` × the document's median
    font size (default 1.4×). Subsection headings (smaller bold/large text)
@@ -123,6 +125,10 @@ A block is **atomic** (never split unless taller than a page) when its kind is:
   detected via `page.get_drawings()`. Tiny strokes (rules / underlines /
   separators) are filtered out, then nearby drawings are merged. Clusters
   that overlap heavily with running text are rejected.
+- `CALLOUT` — text sitting inside a filled-background rectangle: fenced
+  code blocks, admonitions, tip / note / warning panels, etc. Detected by
+  finding sizable non-white filled rects via `page.get_drawings()` and
+  swallowing every text block whose bbox sits inside.
 
 Figure detection can be tuned via `SplitConfig`:
 

@@ -13,15 +13,21 @@ class BlockKind(str, Enum):
     IMAGE = "image"
     TABLE = "table"   # heuristically detected (column-clustered text rows)
     FIGURE = "figure"  # heuristically detected (vector drawings: charts/diagrams/flowcharts)
+    CALLOUT = "callout"  # text inside a filled background rectangle (code blocks, callouts, admonitions)
     OTHER = "other"
 
     @property
     def is_atomic(self) -> bool:
         """Atomic blocks must NEVER be split across pages unless they exceed
-        a full page on their own. Tables, images and figures (vector
-        diagrams/charts/flowcharts) are atomic.
+        a full page on their own. Tables, images, figures, and callouts
+        (filled-background blocks like code/admonition boxes) are atomic.
         """
-        return self in (BlockKind.IMAGE, BlockKind.TABLE, BlockKind.FIGURE)
+        return self in (
+            BlockKind.IMAGE,
+            BlockKind.TABLE,
+            BlockKind.FIGURE,
+            BlockKind.CALLOUT,
+        )
 
     @property
     def is_main_heading(self) -> bool:
