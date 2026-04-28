@@ -104,6 +104,10 @@ def extract_layout(
     # cell). Merge them into single atomic TABLE blocks so they're never split.
     blocks = _detect_multi_block_tables(blocks, median_lh)
 
+    # Expand table bboxes so they include their drawn cell backgrounds and
+    # gridlines (which typically extend a few points above/below the text).
+    _expand_table_bboxes_to_drawings(page, blocks, median_lh)
+
     log.info(
         "Extracted %d blocks (%d text, %d image); median line h=%.1fpt, font=%.1fpt",
         len(blocks),
@@ -526,3 +530,54 @@ def _detect_multi_block_tables(
         len(table_ranges), len(merged),
     )
     return new_blocks
+
+
+def _expand_table_bboxes_to_drawings(
+    page: "fitz.Page",
+    blocks: List[Block],
+    median_line_height: float,
+) -> None:
+    """Grow each ``TABLE`` block's bbox to enclose any drawn cell backgrounds,
+    borders and gridlines that visually belong to the table.
+
+    PyMuPDF gives us text bboxes that hug the glyphs, but tables are drawn as
+    a grid of rectangles whose top/bottom edges typically extend a few points
+    beyond the text. Without this expansion the planner can place a cut
+    between the text-bbox top and the actual top border, leaving a sliver of
+    the header band on the previous page.
+    """
+    tables = [b for b in blocks if b.kind == BlockKind.TABLE]
+    if not tables:
+        return
+    try:
+        drawings = page.get_drawings()
+    except Exception as e:  # pragma: no cover - defensive
+        log.debug("get_drawings() failed during table expansion: %s", e)
+        return
+    if not drawings:
+        return
+
+    rects = [d["rect"] for d in drawings if d.get("rect") is not None]
+    # Slack: how far above/below a table a drawing may sit and still be
+    # considered part of it. One line of body text is plenty for grid borders
+    # and header bands without grabbing surrounding paragraphs.
+    y_slack = max(median_line_height, 12.0)
+    x_slack = 4.0
+
+    for t in tables:
+        tx0, ty0, tx1, ty1 = t.bbox
+        new_y0, new_y1 = ty0, ty1
+        new_x0, new_x1 = tx0, tx1
+        for r in rects:
+            # Drawing must sit horizontally within the table column band.
+            if r.x0 < tx0 - x_slack or r.x1 > tx1 + x_slack:
+                continue
+            # Drawing must touch the table vertically (overlap or near edge).
+            if r.y1 < ty0 - y_slack or r.y0 > ty1 + y_slack:
+                continue
+            new_y0 = min(new_y0, r.y0)
+            new_y1 = max(new_y1, r.y1)
+            new_x0 = min(new_x0, r.x0)
+            new_x1 = max(new_x1, r.x1)
+        if (new_y0, new_y1, new_x0, new_x1) != (ty0, ty1, tx0, tx1):
+            t.bbox = (new_x0, new_y0, new_x1, new_y1)

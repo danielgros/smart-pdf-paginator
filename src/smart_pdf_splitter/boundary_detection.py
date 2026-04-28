@@ -26,25 +26,54 @@ log = get_logger(__name__)
 
 
 def _classify_headings(layout: LayoutModel, cfg: SplitConfig) -> None:
-    """Tag text blocks as ``MAIN_HEADING`` or ``HEADING`` based on font size.
+    """Tag text blocks as ``MAIN_HEADING`` or ``HEADING``.
 
-    Only the first line's max font size matters. Headings are expected to be
-    short (≤ 2 lines, ≤ 120 chars). Anything else stays ``TEXT``.
+    Strategy: collect every "heading-shaped" candidate (short text block,
+    ≤ 2 lines, ≤ 120 chars, font size noticeably larger than body text),
+    bucket them by font size, then:
+
+      * Drop the single largest size if only one block uses it — that's
+        almost always the article title, which we never want to promote
+        to a page-break trigger.
+      * The next largest remaining size becomes the sole ``MAIN_HEADING``
+        tier (the only kind of heading that forces a new page).
+      * Every other heading-shaped block becomes ``HEADING`` (subsection),
+        which renders inline.
     """
     sub_threshold = layout.median_font_size * cfg.heading_size_ratio
-    main_threshold = layout.median_font_size * cfg.main_heading_size_ratio
+
+    # Collect candidates and their effective heading size.
+    candidates: List[Tuple[float, "Block"]] = []
     for block in layout.blocks:
         if block.kind != BlockKind.TEXT or not block.lines:
             continue
-        first = block.lines[0]
         if len(block.lines) > 2:
             continue
-        if len(first.text.strip()) > 120:
+        if len(block.lines[0].text.strip()) > 120:
             continue
-        size = first.max_size
-        if size >= main_threshold:
+        size = block.lines[0].max_size
+        if size < sub_threshold:
+            continue
+        candidates.append((round(size, 1), block))
+
+    if not candidates:
+        return
+
+    # Bucket by rounded font size.
+    from collections import Counter
+    counts = Counter(s for s, _ in candidates)
+    distinct = sorted(counts.keys(), reverse=True)
+
+    # Discard a singleton largest size (article title).
+    if len(distinct) > 1 and counts[distinct[0]] <= 1:
+        distinct = distinct[1:]
+
+    main_size = distinct[0] if distinct else None
+
+    for size, block in candidates:
+        if main_size is not None and size == main_size:
             block.kind = BlockKind.MAIN_HEADING
-        elif size >= sub_threshold:
+        else:
             block.kind = BlockKind.HEADING
 
 
