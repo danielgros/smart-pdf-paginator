@@ -20,7 +20,8 @@ log = get_logger(__name__)
 
 _BLOCK_COLORS = {
     BlockKind.TEXT: (0.20, 0.45, 0.85),
-    BlockKind.HEADING: (0.85, 0.20, 0.20),
+    BlockKind.HEADING: (0.95, 0.55, 0.30),       # subsection heading: orange
+    BlockKind.MAIN_HEADING: (0.85, 0.10, 0.10),  # main heading: bright red
     BlockKind.IMAGE: (0.20, 0.65, 0.30),
     BlockKind.TABLE: (0.70, 0.45, 0.10),
     BlockKind.FIGURE: (0.55, 0.10, 0.75),

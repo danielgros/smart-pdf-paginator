@@ -1,7 +1,7 @@
 """Configuration dataclasses for the splitter."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
@@ -32,6 +32,7 @@ def resolve_page_size(name: str) -> PageSize:
 
 
 class Strategy(str, Enum):
+    """Deprecated. Retained as a no-op for backward compatibility."""
     SEMANTIC = "semantic"
     VISUAL = "visual"
     HYBRID = "hybrid"
@@ -39,7 +40,17 @@ class Strategy(str, Enum):
 
 @dataclass
 class SplitConfig:
-    """User-facing configuration for splitting a tall PDF."""
+    """User-facing configuration for splitting a tall PDF.
+
+    The splitter has two simple rules:
+
+    1. **Atomic blocks** (images / tables / vector figures) must never be split
+       across pages unless they exceed one page on their own.
+    2. **Main section headings** always start a new output page. Subsection
+       headings flow normally with the surrounding text.
+
+    Everything else fills pages naturally up to the available capacity.
+    """
 
     page_size: PageSize = LETTER
 
@@ -49,33 +60,23 @@ class SplitConfig:
     margin_left: float = 0.5 * INCH
     margin_right: float = 0.5 * INCH
 
+    # Deprecated; kept so existing CLI/library callers don't break.
     strategy: Strategy = Strategy.HYBRID
 
     # Debug
     debug: bool = False
     debug_dir: Optional[str] = None
 
-    # Tunables (sane defaults; rarely changed by users).
-    # Minimum acceptable fill ratio of a page (0..1) before we prefer to extend.
-    min_fill_ratio: float = 0.55
-    # How strongly to penalize underfill vs. semantic quality.
-    underfill_weight: float = 1.0
-    semantic_weight: float = 1.5
-    cut_through_weight: float = 25.0
-
-    # Heading detection: span font-size must exceed median*this to be a heading candidate.
+    # Heading detection.
+    # A line is a *heading* if its font size >= median * heading_size_ratio.
     heading_size_ratio: float = 1.15
-    # A vertical gap is "large" if it exceeds this multiple of median line height.
-    large_gap_ratio: float = 1.8
+    # A heading is a *main* heading (forces a new page) if its font size
+    # >= median * main_heading_size_ratio. Tune to match your document.
+    main_heading_size_ratio: float = 1.4
 
     # Atomic-block protection (figures/diagrams/charts/flowcharts/tables/images).
-    # Detect vector-drawing clusters as FIGURE blocks (best-effort, conservative).
     detect_figures: bool = True
-    # Vector-drawing clusters smaller than this many points tall are ignored
-    # (avoid mistaking horizontal rules / dividers / underlines as figures).
     figure_min_height_pt: float = 24.0
-    # Two drawings are merged into the same figure when their vertical gap is
-    # at most this multiple of the median line height.
     figure_cluster_gap_ratio: float = 1.5
 
     # Render DPI for debug images.

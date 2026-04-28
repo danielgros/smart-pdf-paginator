@@ -20,13 +20,18 @@ def test_extract_layout_finds_blocks_and_headings(simple_tall_pdf):
     cfg = SplitConfig()
     candidates = detect_boundaries(layout, cfg)
 
-    headings = [b for b in layout.blocks if b.kind == BlockKind.HEADING]
+    headings = [
+        b for b in layout.blocks
+        if b.kind in (BlockKind.HEADING, BlockKind.MAIN_HEADING)
+    ]
     assert len(headings) >= 4, f"expected to find headings, got {len(headings)}"
 
     reasons = {c.reason for c in candidates}
     assert BoundaryReason.PAGE_TOP in reasons
     assert BoundaryReason.PAGE_BOTTOM in reasons
-    assert BoundaryReason.BEFORE_HEADING in reasons
+    # The fixture's 18pt headings (vs 11pt body) become MAIN_HEADING under
+    # the default ratio, which produces forced-page candidates.
+    assert BoundaryReason.BEFORE_MAIN_HEADING in reasons
 
 
 def test_candidates_are_sorted_and_unique(simple_tall_pdf):
@@ -35,6 +40,5 @@ def test_candidates_are_sorted_and_unique(simple_tall_pdf):
     candidates = detect_boundaries(layout, SplitConfig())
     ys = [c.y for c in candidates]
     assert ys == sorted(ys)
-    # No two candidates within 1pt.
     for a, b in zip(ys, ys[1:]):
         assert b - a >= 0.99

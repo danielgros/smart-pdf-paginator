@@ -8,7 +8,8 @@ from typing import List, Optional, Tuple
 
 class BlockKind(str, Enum):
     TEXT = "text"
-    HEADING = "heading"
+    HEADING = "heading"            # subsection heading (no forced page break)
+    MAIN_HEADING = "main_heading"  # main section heading (forces new page)
     IMAGE = "image"
     TABLE = "table"   # heuristically detected (column-clustered text rows)
     FIGURE = "figure"  # heuristically detected (vector drawings: charts/diagrams/flowcharts)
@@ -21,6 +22,11 @@ class BlockKind(str, Enum):
         diagrams/charts/flowcharts) are atomic.
         """
         return self in (BlockKind.IMAGE, BlockKind.TABLE, BlockKind.FIGURE)
+
+    @property
+    def is_main_heading(self) -> bool:
+        """Main section headings always start a new output page."""
+        return self is BlockKind.MAIN_HEADING
 
 
 @dataclass
@@ -92,14 +98,18 @@ class LayoutModel:
 
 
 class BoundaryReason(str, Enum):
-    BEFORE_HEADING = "before_heading"
-    BEFORE_ATOMIC = "before_atomic"      # cut just above an atomic block
-    AFTER_ATOMIC = "after_atomic"        # cut just below an atomic block
-    AFTER_PARAGRAPH = "after_paragraph"
-    LARGE_GAP = "large_gap"
+    """Why a cut was placed at a given Y coordinate.
+
+    The simplified planner produces only these reasons. Anything else (gaps
+    between paragraphs, subsection headings, etc.) flows through normal
+    geometric fill and is reported as ``GEOMETRIC_FALLBACK``.
+    """
     PAGE_TOP = "page_top"
     PAGE_BOTTOM = "page_bottom"
-    GEOMETRIC_FALLBACK = "geometric_fallback"
+    BEFORE_MAIN_HEADING = "before_main_heading"  # forced: main heading starts new page
+    BEFORE_ATOMIC = "before_atomic"              # forced: atomic block kept whole
+    AFTER_ATOMIC = "after_atomic"                # cut just below an atomic block
+    GEOMETRIC_FALLBACK = "geometric_fallback"    # safe fill cut between text lines
 
 
 @dataclass
@@ -107,10 +117,6 @@ class BoundaryCandidate:
     """A candidate Y coordinate (in source page space) where we may cut."""
     y: float
     reason: BoundaryReason
-    # Lower is better. 0 = perfect semantic boundary.
-    semantic_penalty: float
-    # True if the cut would slice through a block's bbox.
-    cuts_through_block: bool = False
 
 
 @dataclass
