@@ -1,3 +1,17 @@
+Metadata-Version: 2.4
+Name: smart-pdf-splitter
+Version: 0.1.0
+Summary: Split a single very tall PDF page into multiple US Letter pages at semantic boundaries.
+Author: Smart PDF Splitter Contributors
+License: MIT
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: PyMuPDF>=1.23.0
+Requires-Dist: Pillow>=10.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: reportlab>=4.0; extra == "dev"
+
 # smart-pdf-splitter
 
 Convert a single, very tall PDF page into a multi-page **US Letter** PDF, splitting at

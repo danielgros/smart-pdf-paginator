@@ -1,0 +1,2 @@
+[console_scripts]
+smart-pdf-split = smart_pdf_splitter.cli:main
