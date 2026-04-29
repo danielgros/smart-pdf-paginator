@@ -17,6 +17,8 @@ src/smart_pdf_splitter.egg-info/dependency_links.txt
 src/smart_pdf_splitter.egg-info/entry_points.txt
 src/smart_pdf_splitter.egg-info/requires.txt
 src/smart_pdf_splitter.egg-info/top_level.txt
+tests/test_atomic_blocks.py
 tests/test_boundary_detection.py
+tests/test_main_headings.py
 tests/test_planner.py
 tests/test_renderer.py
